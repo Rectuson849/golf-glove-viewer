@@ -76,6 +76,7 @@ let device = null, chr = null;
 let samples = [];             // {t, raw, mv}
 let zero = 0, peak = 0;
 let recording = false, rows = [];
+let frozenAt = null;           // 연결이 끊긴 시각. 값이 있으면 그래프 시간을 멈춘다
 
 function setStatus(text, on) { $("status").textContent = text; $("status").className = "status" + (on ? " on" : ""); }
 function setButtons(connected) {
@@ -90,7 +91,7 @@ async function connect() {
       acceptAllDevices: true,   // 광고에 이름/UUID가 안 실려도 목록에 보이도록 필터 없이 전부 표시
       optionalServices: [SVC]
     });
-    device.addEventListener("gattserverdisconnected", () => { setStatus("연결이 끊겼습니다", false); setButtons(false); });
+    device.addEventListener("gattserverdisconnected", () => { frozenAt = performance.now(); setStatus("연결이 끊겼습니다", false); setButtons(false); });
     setStatus("연결 중...", false);
     // Windows는 첫 연결이 끊기는 경우가 있어 최대 4번 다시 시도합니다.
     let svc = null, lastErr = null;
@@ -110,6 +111,7 @@ async function connect() {
     chr = await svc.getCharacteristic(CHR);
     chr.addEventListener("characteristicvaluechanged", e => onValue(e.target.value));
     await chr.startNotifications();
+    frozenAt = null; samples = [];
     setStatus("연결됨: " + (device.name || "GolfGlove"), true);
     setButtons(true);
   } catch (err) {
@@ -161,7 +163,7 @@ function draw() {
 
   const L = 46, R = 10, T = 10, B = 24;
   const pw = w - L - R, ph = h - T - B;
-  const now = performance.now();
+  const now = frozenAt !== null ? frozenAt : performance.now();
   const visibleMax = samples.reduce((m, s) => Math.max(m, s.raw), 0);
   const yMax = Math.max(1000, Math.ceil(visibleMax * 1.15 / 500) * 500);
   const X = t => L + (1 - (now - t) / WINDOW_MS) * pw;
