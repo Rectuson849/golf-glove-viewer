@@ -68,7 +68,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   <section class="panel"><canvas id="cv"></canvas></section>
 
   <section class="panel cal">
-    <label>GND 쪽 저항 <input id="rIn" type="number" min="0.1" step="0.1" value="10"> kΩ</label>
+    <label>GND 쪽 저항 <input id="rIn" type="number" min="0.1" step="0.1" value="1"> kΩ</label>
     <label>보정 무게 <input id="calKg" type="number" min="0.1" step="0.1" placeholder="예: 5"> kgf</label>
     <button id="btnCal" disabled>보정 적용</button>
     <button id="btnCalReset">보정 초기화</button>
@@ -86,7 +86,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 </main>
 
 <script>
-const VERSION = "v1.11";          // 고칠 때마다 올린다
+const VERSION = "v1.12";          // 고칠 때마다 올린다
 const VERSION_DATE = "2026-11-22";
 const SVC = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
 const CHR = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
@@ -103,8 +103,8 @@ let vMin = null, vMax = null;   // 연결 후 받은 전압(mV)의 최소/최대
 // 분압 회로: 3.3V - FSR - 노드 - 저항 - GND. FSR 저항 Rf = R*(Vcc-V)/V.
 // FSR은 힘이 컨덕턴스(1/Rf)에 대체로 비례하므로 F = K * (1/Rf).
 // K를 모르는 동안은 추정값(DEFAULT_K)을 쓰며, 무게를 올려 [보정 적용]하면 실제 센서에 맞춘다.
-const VCC = 3300, DEFAULT_K = 1e5, RANGE_KGF = 50;
-let rKohm = 10, K = DEFAULT_K, calibrated = false;
+const VCC = 3300, DEFAULT_K = 1e4, RANGE_KGF = 50;
+let rKohm = 1, K = DEFAULT_K, calibrated = false;
 function gOf(mv) { return (mv < 20 || mv >= VCC - 20) ? 0 : mv / (rKohm * 1000 * (VCC - mv)); }
 function force(mv) {
   if (mv >= VCC - 20) return RANGE_KGF;
