@@ -58,12 +58,13 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
   <div class="btns">
     <button id="btnConnect" class="primary">연결</button>
+    <button id="btnAll">다른 기기 찾기</button>
     <button id="btnZero" disabled>0점 맞추기</button>
     <button id="btnPeak" disabled>최대값 초기화</button>
     <button id="btnRec" disabled>기록 시작</button>
     <button id="btnSave" disabled>CSV 저장</button>
   </div>
-  <p class="note">Chrome 또는 Edge에서 이 파일을 열고 [연결]을 누르면 목록에 GolfGlove가 나옵니다. 아무것도 쥐지 않은 상태에서 [0점 맞추기]를 누르면 그 값이 0이 됩니다. 센서는 값이 20 이상 변할 때와 1초마다 값을 보내므로 그래프는 계단 모양입니다.</p>
+  <p class="note">Chrome 또는 Edge에서 이 파일을 열고 [연결]을 누르면 GolfGlove만 목록에 나옵니다. 목록이 비어 있으면 [다른 기기 찾기]로 주변 전체 기기를 볼 수 있습니다. 아무것도 쥐지 않은 상태에서 [0점 맞추기]를 누르면 그 값이 0이 됩니다. 센서는 값이 20 이상 변할 때와 1초마다 값을 보내므로 그래프는 계단 모양입니다.</p>
 </main>
 
 <script>
@@ -82,13 +83,14 @@ function setStatus(text, on) { $("status").textContent = text; $("status").class
 function setButtons(connected) {
   ["btnZero", "btnPeak", "btnRec"].forEach(id => $(id).disabled = !connected);
   $("btnConnect").textContent = connected ? "연결 끊기" : "연결";
+  $("btnAll").hidden = connected;
 }
 
-async function connect() {
+async function connect(showAll) {
   if (!navigator.bluetooth) { setStatus("이 브라우저는 Web Bluetooth를 지원하지 않습니다 (Chrome/Edge 사용)", false); return; }
   try {
     device = await navigator.bluetooth.requestDevice({
-      acceptAllDevices: true,   // 광고에 이름/UUID가 안 실려도 목록에 보이도록 필터 없이 전부 표시
+      ...(showAll ? { acceptAllDevices: true } : { filters: [{ namePrefix: "Golf" }, { services: [SVC] }] }),
       optionalServices: [SVC]
     });
     device.addEventListener("gattserverdisconnected", () => { frozenAt = performance.now(); setStatus("연결이 끊겼습니다", false); setButtons(false); });
@@ -132,8 +134,9 @@ function onValue(dv) {
 }
 
 $("btnConnect").onclick = () => {
-  if (device && device.gatt.connected) device.gatt.disconnect(); else connect();
+  if (device && device.gatt.connected) device.gatt.disconnect(); else connect(false);
 };
+$("btnAll").onclick = () => { if (!(device && device.gatt.connected)) connect(true); };
 $("btnZero").onclick = () => { if (samples.length) { zero = samples[samples.length - 1].raw; peak = 0; $("peak").textContent = 0; } };
 $("btnPeak").onclick = () => { peak = 0; $("peak").textContent = 0; };
 $("btnRec").onclick = () => {
