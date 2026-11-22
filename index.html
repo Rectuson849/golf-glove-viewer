@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>골프장갑 뷰어</title>
+<style>
+/* 한 화면: 위에 현재값, 가운데 최근 15초 그래프, 아래 조작 버튼 */
+:root {
+  --bg: #f4f6f3; --fg: #1c2420; --muted: #5d6b64; --line: #cdd6d0;
+  --surface: #ffffff; --accent: #17734f; --accent-soft: #dcf0e6; --warn: #b83d12;
+  --font: "Malgun Gothic", "Noto Sans KR", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #131a16; --fg: #e6ece8; --muted: #9aaaa1; --line: #33413a;
+    --surface: #1b251f; --accent: #5ccf9c; --accent-soft: #1d3a2d; --warn: #ff8e66; color-scheme: dark; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font); font-size: 15px; line-height: 1.5; }
+main { max-width: 860px; margin: 0 auto; padding: 20px 16px 40px; display: flex; flex-direction: column; gap: 16px; }
+header { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+h1 { font-size: 20px; margin: 0; }
+.status { color: var(--muted); font-size: 13px; }
+.status.on { color: var(--accent); font-weight: 700; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 14px; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; }
+.stat .k { color: var(--muted); font-size: 12px; }
+.stat .v { font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.stat .u { font-size: 13px; color: var(--muted); font-weight: 400; margin-left: 2px; }
+canvas { width: 100%; height: 280px; display: block; }
+.btns { display: flex; flex-wrap: wrap; gap: 8px; }
+button { font: inherit; padding: 9px 16px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); cursor: pointer; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button:disabled { opacity: .45; cursor: default; }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.note { color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>골프장갑 뷰어</h1>
+    <span id="status" class="status">연결 안 됨</span>
+  </header>
+
+  <section class="panel stats">
+    <div class="stat"><div class="k">현재 값 (0점 기준)</div><div class="v"><span id="rel">–</span></div></div>
+    <div class="stat"><div class="k">ADC 원본</div><div class="v"><span id="raw">–</span></div></div>
+    <div class="stat"><div class="k">전압</div><div class="v"><span id="mv">–</span><span class="u">mV</span></div></div>
+    <div class="stat"><div class="k">최대 (유지)</div><div class="v"><span id="peak">–</span></div></div>
+  </section>
+
+  <section class="panel"><canvas id="cv"></canvas></section>
+
+  <div class="btns">
+    <button id="btnConnect" class="primary">연결</button>
+    <button id="btnZero" disabled>0점 맞추기</button>
+    <button id="btnPeak" disabled>최대값 초기화</button>
+    <button id="btnRec" disabled>기록 시작</button>
+    <button id="btnSave" disabled>CSV 저장</button>
+  </div>
+  <p class="note">Chrome 또는 Edge에서 이 파일을 열고 [연결]을 누르면 목록에 GolfGlove가 나옵니다. 아무것도 쥐지 않은 상태에서 [0점 맞추기]를 누르면 그 값이 0이 됩니다. 센서는 값이 20 이상 변할 때와 1초마다 값을 보내므로 그래프는 계단 모양입니다.</p>
+</main>
+
+<script>
+const SVC = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+const CHR = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
+const WINDOW_MS = 15000;
+
+const $ = id => document.getElementById(id);
+let device = null, chr = null;
+let samples = [];             // {t, raw, mv}
+let zero = 0, peak = 0;
+let recording = false, rows = [];
+
+function setStatus(text, on) { $("status").textContent = text; $("status").className = "status" + (on ? " on" : ""); }
+function setButtons(connected) {
+  ["btnZero", "btnPeak", "btnRec"].forEach(id => $(id).disabled = !connected);
+  $("btnConnect").textContent = connected ? "연결 끊기" : "연결";
+}
+
+async function connect() {
+  if (!navigator.bluetooth) { setStatus("이 브라우저는 Web Bluetooth를 지원하지 않습니다 (Chrome/Edge 사용)", false); return; }
+  try {
+    device = await navigator.bluetooth.requestDevice({
+      acceptAllDevices: true,   // 광고에 이름/UUID가 안 실려도 목록에 보이도록 필터 없이 전부 표시
+      optionalServices: [SVC]
+    });
+    device.addEventListener("gattserverdisconnected", () => { setStatus("연결이 끊겼습니다", false); setButtons(false); });
+    setStatus("연결 중...", false);
+    // Windows는 첫 연결이 끊기는 경우가 있어 최대 4번 다시 시도합니다.
+    let svc = null, lastErr = null;
+    for (let i = 1; i <= 4 && !svc; i++) {
+      try {
+        setStatus("연결 중... (" + i + "/4)", false);
+        const server = await device.gatt.connect();
+        await new Promise(r => setTimeout(r, 500));   // 연결 직후 잠깐 안정화
+        svc = await server.getPrimaryService(SVC);
+      } catch (e) {
+        lastErr = e;
+        if (device.gatt.connected) device.gatt.disconnect();
+        await new Promise(r => setTimeout(r, 1000));
+      }
+    }
+    if (!svc) throw lastErr;
+    chr = await svc.getCharacteristic(CHR);
+    chr.addEventListener("characteristicvaluechanged", e => onValue(e.target.value));
+    await chr.startNotifications();
+    setStatus("연결됨: " + (device.name || "GolfGlove"), true);
+    setButtons(true);
+  } catch (err) {
+    setStatus("연결 실패: " + err.message, false);
+  }
+}
+
+function onValue(dv) {
+  if (dv.byteLength < 4) return;
+  const raw = dv.getUint16(0, true), mv = dv.getUint16(2, true), t = performance.now();
+  samples.push({ t, raw, mv });
+  const cutoff = t - WINDOW_MS - 2000;
+  while (samples.length > 2 && samples[1].t < cutoff) samples.shift();
+  const rel = Math.max(0, raw - zero);
+  if (rel > peak) peak = rel;
+  $("rel").textContent = rel; $("raw").textContent = raw; $("mv").textContent = mv; $("peak").textContent = peak;
+  if (recording) { rows.push([new Date().toISOString(), raw, mv, rel].join(",")); $("btnSave").disabled = false; }
+}
+
+$("btnConnect").onclick = () => {
+  if (device && device.gatt.connected) device.gatt.disconnect(); else connect();
+};
+$("btnZero").onclick = () => { if (samples.length) { zero = samples[samples.length - 1].raw; peak = 0; $("peak").textContent = 0; } };
+$("btnPeak").onclick = () => { peak = 0; $("peak").textContent = 0; };
+$("btnRec").onclick = () => {
+  recording = !recording;
+  if (recording) rows = [];
+  $("btnRec").textContent = recording ? "기록 중지" : "기록 시작";
+  $("btnSave").disabled = rows.length === 0;
+};
+$("btnSave").onclick = () => {
+  const csv = "time,raw,mV,relative\n" + rows.join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  a.download = "golf_grip_" + new Date().toISOString().replace(/[:.]/g, "-") + ".csv";
+  a.click();
+};
+
+// --- 그래프 ---
+const cv = $("cv"), ctx = cv.getContext("2d");
+function css(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+function draw() {
+  const dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth, h = cv.clientHeight;
+  if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+
+  const L = 46, R = 10, T = 10, B = 24;
+  const pw = w - L - R, ph = h - T - B;
+  const now = performance.now();
+  const visibleMax = samples.reduce((m, s) => Math.max(m, s.raw), 0);
+  const yMax = Math.max(1000, Math.ceil(visibleMax * 1.15 / 500) * 500);
+  const X = t => L + (1 - (now - t) / WINDOW_MS) * pw;
+  const Y = v => T + (1 - v / yMax) * ph;
+
+  ctx.font = "11px sans-serif"; ctx.fillStyle = css("--muted"); ctx.strokeStyle = css("--line"); ctx.lineWidth = 1;
+  const step = yMax <= 2000 ? 500 : 1000;
+  for (let v = 0; v <= yMax; v += step) {
+    const y = Math.round(Y(v)) + 0.5;
+    ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(w - R, y); ctx.stroke();
+    ctx.textAlign = "right"; ctx.fillText(v, L - 6, y + 4);
+  }
+  ctx.textAlign = "center";
+  for (let s = 0; s <= 15; s += 5) ctx.fillText(s === 0 ? "지금" : "-" + s + "초", L + (1 - s / 15) * pw, h - 6);
+
+  if (zero > 0) {   // 0점 기준선
+    ctx.setLineDash([4, 4]); ctx.strokeStyle = css("--muted");
+    ctx.beginPath(); ctx.moveTo(L, Y(zero)); ctx.lineTo(w - R, Y(zero)); ctx.stroke(); ctx.setLineDash([]);
+  }
+
+  if (!samples.length) { ctx.fillStyle = css("--muted"); ctx.textAlign = "center"; ctx.fillText("연결하면 값이 여기에 표시됩니다", L + pw / 2, T + ph / 2); return; }
+
+  ctx.strokeStyle = css("--accent"); ctx.lineWidth = 2; ctx.lineJoin = "round";
+  ctx.beginPath();
+  let started = false, y = 0;
+  samples.forEach(s => {
+    const x = Math.max(L, X(s.t));
+    if (!started) { ctx.moveTo(L, Y(s.raw)); started = true; }
+    else ctx.lineTo(x, y);          // 이전 값을 유지하다 새 값에서 꺾기
+    ctx.lineTo(x, Y(s.raw)); y = Y(s.raw);
+  });
+  ctx.lineTo(L + pw, y);
+  ctx.stroke();
+}
+(function loop() { draw(); requestAnimationFrame(loop); })();
+</script>
+</body>
+</html>
