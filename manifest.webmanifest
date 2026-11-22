@@ -1,0 +1,12 @@
+{
+  "name": "골프장갑 뷰어",
+  "short_name": "골프장갑",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f6f3",
+  "theme_color": "#17734f",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
