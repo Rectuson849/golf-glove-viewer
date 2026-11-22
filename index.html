@@ -24,6 +24,7 @@ body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--fo
 main { max-width: 860px; margin: 0 auto; padding: 20px 16px 40px; display: flex; flex-direction: column; gap: 16px; }
 header { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
 h1 { font-size: 20px; margin: 0; }
+.ver { color: var(--muted); font-size: 12px; font-weight: 400; margin-left: 6px; }
 .status { color: var(--muted); font-size: 13px; }
 .status.on { color: var(--accent); font-weight: 700; }
 .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 14px; }
@@ -43,7 +44,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 <body>
 <main>
   <header>
-    <h1>골프장갑 뷰어</h1>
+    <h1>골프장갑 뷰어 <small id="ver" class="ver"></small></h1>
     <span id="status" class="status">연결 안 됨</span>
   </header>
 
@@ -68,11 +69,14 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 </main>
 
 <script>
+const VERSION = "v1.4";          // 고칠 때마다 올린다
+const VERSION_DATE = "2026-11-22";
 const SVC = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
 const CHR = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
 const WINDOW_MS = 15000;
 
 const $ = id => document.getElementById(id);
+$("ver").textContent = VERSION + " · " + VERSION_DATE;
 let device = null, chr = null;
 let samples = [];             // {t, raw, mv}
 let zero = 0, peak = 0;
