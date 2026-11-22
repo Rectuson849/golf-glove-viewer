@@ -42,6 +42,8 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .cal label { display: inline-flex; align-items: center; gap: 6px; }
 .cal input { width: 72px; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
 .cal .msg { color: var(--muted); flex-basis: 100%; }
+.range { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 20px; font-variant-numeric: tabular-nums; display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+.range .k { font-size: 12px; }
 .unit { font-size: 16px; color: var(--fg); font-weight: 700; margin-left: 5px; }
 .note { color: var(--muted); font-size: 13px; }
 </style>
@@ -60,6 +62,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
       <div class="stat"><div class="k">현재</div><div class="v"><span id="vNow">–</span><span class="unit">kgf</span></div></div>
       <div class="stat"><div class="k">MAX</div><div class="v"><span id="vMax">–</span><span class="unit">kgf</span></div></div>
     </div>
+    <div class="range"><span class="k">범위 (최소 ~ 최대)</span> <b id="vRange">–</b></div>
   </section>
 
   <section class="panel"><canvas id="cv"></canvas></section>
@@ -83,7 +86,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 </main>
 
 <script>
-const VERSION = "v1.8";          // 고칠 때마다 올린다
+const VERSION = "v1.9";          // 고칠 때마다 올린다
 const VERSION_DATE = "2026-11-22";
 const SVC = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
 const CHR = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
@@ -124,6 +127,7 @@ function showStats() {
   $("vMax").textContent = vMax === null ? "–" : fmt(force(vMax));
   const last = samples[samples.length - 1];
   $("vNow").textContent = last ? fmt(force(last.mv)) : "–";
+  $("vRange").textContent = vMin === null ? "–" : fmt(force(vMin)) + " ~ " + fmt(force(vMax)) + " kgf";
 }
 function calMsg(t) { $("calMsg").textContent = t; }
 let recording = false, rows = [];
