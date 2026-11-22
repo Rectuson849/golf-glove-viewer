@@ -38,10 +38,6 @@ button { font: inherit; padding: 9px 16px; border-radius: 6px; border: 1px solid
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 button:disabled { opacity: .45; cursor: default; }
 button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.cal { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; font-size: 13px; }
-.cal label { display: inline-flex; align-items: center; gap: 6px; }
-.cal input { width: 72px; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
-.cal .msg { color: var(--muted); flex-basis: 100%; }
 .range { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 20px; font-variant-numeric: tabular-nums; display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
 .range .k { font-size: 12px; }
 .unit { font-size: 16px; color: var(--fg); font-weight: 700; margin-left: 5px; }
@@ -67,14 +63,6 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
   <section class="panel"><canvas id="cv"></canvas></section>
 
-  <section class="panel cal">
-    <label>GND 쪽 저항 <input id="rIn" type="number" min="0.1" step="0.1" value="1"> kΩ</label>
-    <label>보정 무게 <input id="calKg" type="number" min="0.1" step="0.1" placeholder="예: 5"> kgf</label>
-    <button id="btnCal" disabled>보정 적용</button>
-    <button id="btnCalReset">보정 초기화</button>
-    <span class="msg" id="calMsg">센서에 무게를 아는 물건을 올린 채 무게를 입력하고 [보정 적용]을 누르면 그 값을 기준으로 환산합니다.</span>
-  </section>
-
   <div class="btns">
     <button id="btnConnect" class="primary">연결</button>
     <button id="btnAll">다른 기기 찾기</button>
@@ -82,11 +70,11 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     <button id="btnRec" disabled>기록 시작</button>
     <button id="btnSave" disabled>CSV 저장</button>
   </div>
-  <p class="note">Chrome 또는 Edge에서 이 파일을 열고 [연결]을 누르면 GolfGlove만 목록에 나옵니다. 목록이 비어 있으면 [다른 기기 찾기]로 주변 전체 기기를 볼 수 있습니다. MIN과 MAX는 연결한 뒤 받은 값 중 가장 작은 값과 큰 값이며, [MIN/MAX 초기화]로 다시 시작할 수 있습니다. 압력 값은 전압을 분압 회로 공식으로 환산한 것이며, 보정하기 전에는 추정값입니다. 센서 범위는 50kgf입니다.</p>
+  <p class="note">Chrome 또는 Edge에서 이 파일을 열고 [연결]을 누르면 GolfGlove만 목록에 나옵니다. 목록이 비어 있으면 [다른 기기 찾기]로 주변 전체 기기를 볼 수 있습니다. MIN과 MAX는 연결한 뒤 받은 값 중 가장 작은 값과 큰 값이며, [MIN/MAX 초기화]로 다시 시작할 수 있습니다. 압력 값은 전압을 분압 회로(GND 쪽 1kΩ) 공식으로 환산한 추정값이며, 변화를 비교하는 용도입니다. 센서 범위는 50kgf입니다.</p>
 </main>
 
 <script>
-const VERSION = "v1.12";          // 고칠 때마다 올린다
+const VERSION = "v1.13";          // 고칠 때마다 올린다
 const VERSION_DATE = "2026-11-22";
 const SVC = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
 const CHR = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
@@ -104,21 +92,13 @@ let vMin = null, vMax = null;   // 연결 후 받은 전압(mV)의 최소/최대
 // FSR은 힘이 컨덕턴스(1/Rf)에 대체로 비례하므로 F = K * (1/Rf).
 // K를 모르는 동안은 추정값(DEFAULT_K)을 쓰며, 무게를 올려 [보정 적용]하면 실제 센서에 맞춘다.
 const VCC = 3300, DEFAULT_K = 1e4, RANGE_KGF = 50;
-let rKohm = 1, K = DEFAULT_K, calibrated = false;
+let rKohm = 1, K = DEFAULT_K;
 function gOf(mv) { return (mv < 20 || mv >= VCC - 20) ? 0 : mv / (rKohm * 1000 * (VCC - mv)); }
 function force(mv) {
   if (mv >= VCC - 20) return RANGE_KGF;
   return Math.min(RANGE_KGF, K * gOf(mv));
 }
 const fmt = f => f.toFixed(f < 10 ? 2 : 1);
-function saveCal() { try { localStorage.setItem("golfCal", JSON.stringify({ rKohm, K, calibrated })); } catch (e) {} }
-function loadCal() {
-  try {
-    const c = JSON.parse(localStorage.getItem("golfCal") || "null");
-    if (c && c.rKohm > 0 && c.K > 0) { rKohm = c.rKohm; K = c.K; calibrated = !!c.calibrated; }
-  } catch (e) {}
-  $("rIn").value = rKohm;
-}
 function showStats() {
   $("vMin").textContent = vMin === null ? "–" : fmt(force(vMin));
   $("vMax").textContent = vMax === null ? "–" : fmt(force(vMax));
@@ -126,14 +106,13 @@ function showStats() {
   $("vNow").textContent = last ? fmt(force(last.mv)) : "–";
   $("vRange").textContent = vMin === null ? "–" : fmt(force(vMin)) + " ~ " + fmt(force(vMax)) + " kgf";
 }
-function calMsg(t) { $("calMsg").textContent = t; }
 let recording = false, rows = [];
 let lastRxAt = 0;              // 마지막으로 값을 받은 시각
 let frozenAt = null;           // 연결이 끊긴 시각. 값이 있으면 그래프 시간을 멈춘다
 
 function setStatus(text, on) { $("status").textContent = text; $("status").className = "status" + (on ? " on" : ""); }
 function setButtons(connected) {
-  ["btnPeak", "btnRec", "btnCal"].forEach(id => $(id).disabled = !connected);
+  ["btnPeak", "btnRec"].forEach(id => $(id).disabled = !connected);
   $("btnConnect").textContent = connected ? "연결 끊기" : "연결";
   $("btnAll").hidden = connected;
 }
@@ -196,25 +175,6 @@ $("btnConnect").onclick = () => {
 $("btnAll").onclick = () => { if (!(device && device.gatt.connected)) connect(true); };
 function resetMinMax() { vMin = null; vMax = null; showStats(); }
 $("btnPeak").onclick = () => { const last = samples[samples.length - 1]; vMin = vMax = last ? last.mv : null; showStats(); };
-
-$("rIn").onchange = () => {
-  const v = parseFloat($("rIn").value);
-  if (!(v > 0)) { $("rIn").value = rKohm; return; }
-  rKohm = v; K = DEFAULT_K; calibrated = false; saveCal(); resetMinMax();
-  calMsg("저항값이 바뀌어 보정이 초기화되었습니다. 다시 보정하세요.");
-};
-$("btnCal").onclick = () => {
-  const kg = parseFloat($("calKg").value);
-  if (!(kg > 0)) { calMsg("보정 무게(kgf)를 입력하세요."); return; }
-  const recent = samples.filter(s => s.t > performance.now() - 1000);
-  if (!recent.length) { calMsg("최근 1초 동안 들어온 값이 없습니다. 센서를 누른 채 다시 눌러 주세요."); return; }
-  const g = recent.reduce((a, s) => a + gOf(s.mv), 0) / recent.length;
-  if (!(g > 0)) { calMsg("센서가 눌려 있지 않습니다. 무게를 올린 상태에서 누르세요."); return; }
-  K = kg / g; calibrated = true; saveCal(); resetMinMax();
-  calMsg("보정 완료: " + kg + " kgf 기준.");
-};
-$("btnCalReset").onclick = () => { K = DEFAULT_K; calibrated = false; saveCal(); resetMinMax(); calMsg("보정을 초기화했습니다. 추정값을 사용합니다."); };
-loadCal();
 $("btnRec").onclick = () => {
   recording = !recording;
   if (recording) rows = [];
