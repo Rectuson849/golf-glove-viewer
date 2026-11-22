@@ -38,6 +38,11 @@ button { font: inherit; padding: 9px 16px; border-radius: 6px; border: 1px solid
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 button:disabled { opacity: .45; cursor: default; }
 button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.cal { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; font-size: 13px; }
+.cal label { display: inline-flex; align-items: center; gap: 6px; }
+.cal input { width: 72px; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
+.cal .msg { color: var(--muted); flex-basis: 100%; }
+.unit { font-size: 14px; color: var(--muted); font-weight: 400; margin-left: 4px; }
 .note { color: var(--muted); font-size: 13px; }
 </style>
 </head>
@@ -49,15 +54,23 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   </header>
 
   <section class="panel">
-    <div class="k" style="margin-bottom:8px">새끼손가락 압력 (ADC 값, 0~4095)</div>
+    <div class="k" style="margin-bottom:8px">새끼손가락 압력 <span id="calState"></span></div>
     <div class="stats">
-      <div class="stat"><div class="k">MIN</div><div class="v"><span id="vMin">–</span></div></div>
-      <div class="stat"><div class="k">현재</div><div class="v"><span id="vNow">–</span></div></div>
-      <div class="stat"><div class="k">MAX</div><div class="v"><span id="vMax">–</span></div></div>
+      <div class="stat"><div class="k">MIN</div><div class="v"><span id="vMin">–</span><span class="unit">kgf</span></div></div>
+      <div class="stat"><div class="k">현재</div><div class="v"><span id="vNow">–</span><span class="unit">kgf</span></div></div>
+      <div class="stat"><div class="k">MAX</div><div class="v"><span id="vMax">–</span><span class="unit">kgf</span></div></div>
     </div>
   </section>
 
   <section class="panel"><canvas id="cv"></canvas></section>
+
+  <section class="panel cal">
+    <label>GND 쪽 저항 <input id="rIn" type="number" min="0.1" step="0.1" value="10"> kΩ</label>
+    <label>보정 무게 <input id="calKg" type="number" min="0.1" step="0.1" placeholder="예: 5"> kgf</label>
+    <button id="btnCal" disabled>보정 적용</button>
+    <button id="btnCalReset">보정 초기화</button>
+    <span class="msg" id="calMsg">센서에 무게를 아는 물건을 올린 채 무게를 입력하고 [보정 적용]을 누르면 그 값을 기준으로 환산합니다.</span>
+  </section>
 
   <div class="btns">
     <button id="btnConnect" class="primary">연결</button>
@@ -66,11 +79,11 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     <button id="btnRec" disabled>기록 시작</button>
     <button id="btnSave" disabled>CSV 저장</button>
   </div>
-  <p class="note">Chrome 또는 Edge에서 이 파일을 열고 [연결]을 누르면 GolfGlove만 목록에 나옵니다. 목록이 비어 있으면 [다른 기기 찾기]로 주변 전체 기기를 볼 수 있습니다. MIN과 MAX는 연결한 뒤 받은 값 중 가장 작은 값과 큰 값이며, [MIN/MAX 초기화]로 다시 시작할 수 있습니다. 센서는 값이 20 이상 변할 때와 1초마다 값을 보내므로 그래프는 계단 모양입니다.</p>
+  <p class="note">Chrome 또는 Edge에서 이 파일을 열고 [연결]을 누르면 GolfGlove만 목록에 나옵니다. 목록이 비어 있으면 [다른 기기 찾기]로 주변 전체 기기를 볼 수 있습니다. MIN과 MAX는 연결한 뒤 받은 값 중 가장 작은 값과 큰 값이며, [MIN/MAX 초기화]로 다시 시작할 수 있습니다. 압력 값은 전압을 분압 회로 공식으로 환산한 것이며, 보정하기 전에는 추정값입니다. 센서 범위는 50kgf입니다.</p>
 </main>
 
 <script>
-const VERSION = "v1.6";          // 고칠 때마다 올린다
+const VERSION = "v1.7";          // 고칠 때마다 올린다
 const VERSION_DATE = "2026-11-22";
 const SVC = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
 const CHR = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
@@ -81,13 +94,44 @@ const $ = id => document.getElementById(id);
 $("ver").textContent = VERSION + " · " + VERSION_DATE;
 let device = null, chr = null;
 let samples = [];             // {t, raw, mv}
-let vMin = null, vMax = null;   // 연결 후 받은 값의 최소/최대
+let vMin = null, vMax = null;   // 연결 후 받은 전압(mV)의 최소/최대. 표시할 때 kgf로 환산한다
+
+// --- 전압(mV) -> 힘(kgf) 환산 ---
+// 분압 회로: 3.3V - FSR - 노드 - 저항 - GND. FSR 저항 Rf = R*(Vcc-V)/V.
+// FSR은 힘이 컨덕턴스(1/Rf)에 대체로 비례하므로 F = K * (1/Rf).
+// K를 모르는 동안은 추정값(DEFAULT_K)을 쓰며, 무게를 올려 [보정 적용]하면 실제 센서에 맞춘다.
+const VCC = 3300, DEFAULT_K = 1e5, RANGE_KGF = 50;
+let rKohm = 10, K = DEFAULT_K, calibrated = false;
+function gOf(mv) { return (mv < 20 || mv >= VCC - 20) ? 0 : mv / (rKohm * 1000 * (VCC - mv)); }
+function force(mv) {
+  if (mv >= VCC - 20) return RANGE_KGF;
+  return Math.min(RANGE_KGF, K * gOf(mv));
+}
+const fmt = f => f.toFixed(f < 10 ? 2 : 1);
+function saveCal() { try { localStorage.setItem("golfCal", JSON.stringify({ rKohm, K, calibrated })); } catch (e) {} }
+function loadCal() {
+  try {
+    const c = JSON.parse(localStorage.getItem("golfCal") || "null");
+    if (c && c.rKohm > 0 && c.K > 0) { rKohm = c.rKohm; K = c.K; calibrated = !!c.calibrated; }
+  } catch (e) {}
+  $("rIn").value = rKohm;
+}
+function updateCalState() {
+  $("calState").textContent = calibrated ? "(보정됨)" : "(추정값, 보정 전)";
+}
+function showStats() {
+  $("vMin").textContent = vMin === null ? "–" : fmt(force(vMin));
+  $("vMax").textContent = vMax === null ? "–" : fmt(force(vMax));
+  const last = samples[samples.length - 1];
+  $("vNow").textContent = last ? fmt(force(last.mv)) : "–";
+}
+function calMsg(t) { $("calMsg").textContent = t; }
 let recording = false, rows = [];
 let frozenAt = null;           // 연결이 끊긴 시각. 값이 있으면 그래프 시간을 멈춘다
 
 function setStatus(text, on) { $("status").textContent = text; $("status").className = "status" + (on ? " on" : ""); }
 function setButtons(connected) {
-  ["btnPeak", "btnRec"].forEach(id => $(id).disabled = !connected);
+  ["btnPeak", "btnRec", "btnCal"].forEach(id => $(id).disabled = !connected);
   $("btnConnect").textContent = connected ? "연결 끊기" : "연결";
   $("btnAll").hidden = connected;
 }
@@ -136,18 +180,37 @@ function onValue(dv) {
   samples.push({ t, raw, mv });
   const cutoff = t - WINDOW_MS - 2000;
   while (samples.length > 2 && samples[1].t < cutoff) samples.shift();
-  if (vMin === null || raw < vMin) vMin = raw;
-  if (vMax === null || raw > vMax) vMax = raw;
-  $("vMin").textContent = vMin; $("vNow").textContent = raw; $("vMax").textContent = vMax;
-  if (recording) { rows.push([new Date().toISOString(), raw, mv].join(",")); $("btnSave").disabled = false; }
+  if (vMin === null || mv < vMin) vMin = mv;
+  if (vMax === null || mv > vMax) vMax = mv;
+  showStats();
+  if (recording) { rows.push([new Date().toISOString(), raw, mv, force(mv).toFixed(3)].join(",")); $("btnSave").disabled = false; }
 }
 
 $("btnConnect").onclick = () => {
   if (device && device.gatt.connected) device.gatt.disconnect(); else connect(false);
 };
 $("btnAll").onclick = () => { if (!(device && device.gatt.connected)) connect(true); };
-function resetMinMax() { vMin = null; vMax = null; $("vMin").textContent = "–"; $("vMax").textContent = "–"; }
-$("btnPeak").onclick = () => { resetMinMax(); const last = samples[samples.length - 1]; if (last) { vMin = vMax = last.raw; $("vMin").textContent = $("vMax").textContent = last.raw; } };
+function resetMinMax() { vMin = null; vMax = null; showStats(); }
+$("btnPeak").onclick = () => { const last = samples[samples.length - 1]; vMin = vMax = last ? last.mv : null; showStats(); };
+
+$("rIn").onchange = () => {
+  const v = parseFloat($("rIn").value);
+  if (!(v > 0)) { $("rIn").value = rKohm; return; }
+  rKohm = v; K = DEFAULT_K; calibrated = false; saveCal(); updateCalState(); resetMinMax();
+  calMsg("저항값이 바뀌어 보정이 초기화되었습니다. 다시 보정하세요.");
+};
+$("btnCal").onclick = () => {
+  const kg = parseFloat($("calKg").value);
+  if (!(kg > 0)) { calMsg("보정 무게(kgf)를 입력하세요."); return; }
+  const recent = samples.filter(s => s.t > performance.now() - 1000);
+  if (!recent.length) { calMsg("최근 1초 동안 들어온 값이 없습니다. 센서를 누른 채 다시 눌러 주세요."); return; }
+  const g = recent.reduce((a, s) => a + gOf(s.mv), 0) / recent.length;
+  if (!(g > 0)) { calMsg("센서가 눌려 있지 않습니다. 무게를 올린 상태에서 누르세요."); return; }
+  K = kg / g; calibrated = true; saveCal(); updateCalState(); resetMinMax();
+  calMsg("보정 완료: " + kg + " kgf 기준.");
+};
+$("btnCalReset").onclick = () => { K = DEFAULT_K; calibrated = false; saveCal(); updateCalState(); resetMinMax(); calMsg("보정을 초기화했습니다. 추정값을 사용합니다."); };
+loadCal(); updateCalState();
 $("btnRec").onclick = () => {
   recording = !recording;
   if (recording) rows = [];
@@ -155,7 +218,7 @@ $("btnRec").onclick = () => {
   $("btnSave").disabled = rows.length === 0;
 };
 $("btnSave").onclick = () => {
-  const csv = "time,raw,mV\n" + rows.join("\n");
+  const csv = "time,raw,mV,kgf\n" + rows.join("\n");
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
   a.download = "golf_grip_" + new Date().toISOString().replace(/[:.]/g, "-") + ".csv";
@@ -173,20 +236,23 @@ function draw() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, w, h);
 
-  const L = 46, R = 10, T = 10, B = 24;
+  const L = 46, R = 10, T = 22, B = 24;
   const pw = w - L - R, ph = h - T - B;
   const now = frozenAt !== null ? frozenAt : performance.now();
-  const visibleMax = samples.reduce((m, s) => Math.max(m, s.raw), 0);
-  const yMax = Math.max(1000, Math.ceil(visibleMax * 1.15 / 500) * 500);
+  const visibleMax = samples.reduce((m, s) => Math.max(m, force(s.mv)), 0);
+  const target = Math.max(2, visibleMax * 1.15);
+  const mag = Math.pow(10, Math.floor(Math.log10(target / 4)));
+  const step = [1, 2, 5, 10].map(m => m * mag).find(v => v >= target / 4) || 10 * mag;
+  const yMax = Math.ceil(target / step) * step;
   const X = t => L + (1 - (now - t) / WINDOW_MS) * pw;
   const Y = v => T + (1 - v / yMax) * ph;
 
   ctx.font = "11px sans-serif"; ctx.fillStyle = css("--muted"); ctx.strokeStyle = css("--line"); ctx.lineWidth = 1;
-  const step = yMax <= 2000 ? 500 : 1000;
-  for (let v = 0; v <= yMax; v += step) {
+  ctx.textAlign = "left"; ctx.fillText("kgf", 4, 12);
+  for (let v = 0; v <= yMax + step / 2; v += step) {
     const y = Math.round(Y(v)) + 0.5;
     ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(w - R, y); ctx.stroke();
-    ctx.textAlign = "right"; ctx.fillText(v, L - 6, y + 4);
+    ctx.textAlign = "right"; ctx.fillText(+v.toFixed(2), L - 6, y + 4);
   }
   ctx.textAlign = "center";
   for (let s = 0; s <= 15; s += 5) ctx.fillText(s === 0 ? "지금" : "-" + s + "초", L + (1 - s / 15) * pw, h - 6);
@@ -198,9 +264,10 @@ function draw() {
   let started = false, y = 0;
   samples.forEach(s => {
     const x = Math.max(L, X(s.t));
-    if (!started) { ctx.moveTo(L, Y(s.raw)); started = true; }
+    const fy = Y(force(s.mv));
+    if (!started) { ctx.moveTo(L, fy); started = true; }
     else ctx.lineTo(x, y);          // 이전 값을 유지하다 새 값에서 꺾기
-    ctx.lineTo(x, Y(s.raw)); y = Y(s.raw);
+    ctx.lineTo(x, fy); y = fy;
   });
   ctx.lineTo(L + pw, y);
   ctx.stroke();
